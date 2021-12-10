@@ -254,3 +254,15 @@ class GenePredObj(object):
             intronList = set(intronList)
             intronLength += self.getBlockLength(intronList)
         return intronLength
+
+class Logger(object):
+    def log(self, msg):
+        '''
+        Print to log file and stdout with a single command.
+        '''
+        import time
+        if isinstance(msg,list):
+            msg = ' '.join(msg)
+        else:
+            msg = ('{T}: '+msg).format(T=time.ctime())
+        print(msg)

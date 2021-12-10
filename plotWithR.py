@@ -34,7 +34,7 @@ drawPhyloPlotR = '''
 '''
 
 drawQQplotR = '''
-    library(data.table)
+    suppressMessages(library(data.table))
     # library(CMplot)
     drawQQplot <- function(gwas_res, out_prefix, sep, title, dpi, threshold) {
         sink('/dev/null')
@@ -48,9 +48,10 @@ drawQQplotR = '''
 
 drawManhattanPlotR = '''
     suppressMessages(library(data.table))
+    suppressMessages(library(dplyr))
     # library(CMplot)
-    drawManhattanPlot <- function(gwas_res, thresholdi, out_prefix, sep, title, dpi) {
-        sink('/dev/null')
+    drawManhattanPlot <- function(gwas_res, thresholdi, out_prefix, sep, title, dpi, chrom, start, end, highlight_pos, highlight_text, file_type) {
+        # sink('/dev/null')
         keepCol <- c('rs', 'chr', 'ps', 'p_wald')
         
         data <- fread(gwas_res, sep=sep, data.table=getOption("datatable.fread.datatable", FALSE), select=keepCol)
@@ -60,11 +61,28 @@ drawManhattanPlotR = '''
         }
         thresholdi <- as.numeric(thresholdi)
         lim <- -log10(min(data[,4])) + 2
-        CMplot(data, plot.type='m', col=c("grey30", "grey60"), ylim=c(2, lim), threshold=thresholdi, 
-            cex=c(0.5, 0.5, 0.5), signal.cex=c(0.5, 0.5, 0.5), threshold.col=c('red', 'green', 'blue'), 
-            chr.den.col=NULL, amplify=TRUE, signal.pch=c(19, 19, 19), dpi=dpi, signal.col=c('red', 'green', 'blue'), 
-            multracks=FALSE, LOG10=TRUE, file='jpg', file.prefix=out_prefix, main=title)
-        sink()
+        if(chrom!=""){
+            data <- data %>% filter(chr==chrom)
+            if(end > start){
+                data <- data %>% filter(ps>=start, ps<=end)
+            }
+        }
+        if(dim(data)[1]>0){
+            highlight_pos <- unlist(strsplit(highlight_pos, ","))
+            highlight_text <- unlist(strsplit(highlight_text, ","))
+            if(length(highlight_pos)==0){
+                highlight_pos <- NULL
+                highlight_text <- NULL
+            }else if(length(highlight_pos)>0 && length(highlight_text)==0){
+                highlight_text <- highlight_pos
+            }
+            CMplot(data, plot.type='m', col=c("grey30", "grey60"), ylim=c(2, lim), threshold=thresholdi, 
+                cex=c(0.5, 0.5, 0.5), signal.cex=c(0.5, 0.5, 0.5), threshold.col=c('red', 'green', 'blue'), 
+                chr.den.col=NULL, amplify=TRUE, signal.pch=c(19, 19, 19), dpi=dpi, signal.col=c('red', 'green', 'blue'), 
+                multracks=FALSE, LOG10=TRUE, file=file_type, file.prefix=out_prefix, main=title, xlab="Chromosome",
+                highlight=highlight_pos, highlight.text=highlight_text, highlight.text.col="black", highlight.text.cex=2)
+        }
+        # sink()
     }
 '''
 
@@ -498,6 +516,38 @@ drawBoxplotR = '''
     }
 '''
 
+drawGroupPlotR = '''
+    suppressMessages(library(ggplot2))
+    suppressMessages(library(data.table))
+    suppressMessages(library(ggpubr))
+    suppressMessages(library(dplyr))
+    suppressMessages(library(rstatix))
+    suppressMessages(library(R.utils))
+    # options(warn=-1)
+    drawGroupPlot <- function(input_file, sep, group_field, value_field, out_prefix, height, width, filter_by_count){
+        input_mat <- fread(input_file, data.table=getOption("datatable.fread.datatable", FALSE))
+        input_mat[, group_field] <- as.factor(input_mat[, group_field])
+        
+        if(filter_by_count>0) {
+            input_mat_n <- input_mat %>% group_by(!!as.name(group_field)) %>% summarise(n = n()) %>% filter(n>=filter_by_count)
+            input_mat <- input_mat %>% filter(!!as.name(group_field) %in% input_mat_n[[group_field]])
+        }
+        p <- ggboxplot(data=input_mat, x=group_field, y=value_field, fill=group_field, width=0.5, 
+                        bxp.errorbar=T, outlier.shape=20)+
+                        theme_bw() +
+                        theme(axis.text.x = element_text(colour = "black", size = 12, vjust =1, hjust = 1, angle=45),
+                            axis.text.y = element_text(colour = "black", size = 12, hjust =1 ),
+                            axis.title = element_text(margin=margin(10, 5, 0, 0), color = "black", size = 14),
+                            axis.title.y = element_text(angle=90),
+                            panel.border = element_rect(color = 'black', fill=NA, size = 1),
+                            panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+                        ) + 
+                        xlab('')
+        p <- p + scale_y_continuous(expand = expansion(mult = c(0.05, 0.1)))
+        ggsave(paste(out_prefix, 'group_box.pdf', sep='_'), plot=p, width = width, height = height, useDingbats=FALSE)
+    }
+'''
+
 drawNetworkPlotR = '''
     options(warn = - 1)
     suppressMessages(library(network))
@@ -594,6 +644,107 @@ drawEnrichPlotR = '''
                 p <- upsetplot(new_res) + scale_y_discrete(labels=function(x) str_wrap(x, width=60))
             ggsave(paste(out_prefix, "enrich", plot_type, go_type, 'pdf', sep='.'), plot=p, device='pdf', width=9, useDingbats=FALSE)
         }
+    }
+
+'''
+
+drawAlleleFreqPlotR = '''
+    suppressMessages(library(ggplot2))
+    suppressMessages(library(dplyr))
+    suppressMessages(library(data.table))
+    options(warn=-1)
+    removeHeterozygous <- function(df, sep="", col=1){
+        g2 <- as.matrix(df[,col,drop=F])
+        n <- nrow(g2)
+        m <- ncol(g2)
+        a1<-matrix(sapply(strsplit(g2,sep),"[",1),nrow = n,ncol=m,byrow = F)
+        a2<-matrix(sapply(strsplit(g2,sep),"[",2),nrow = n,ncol=m,byrow = F)
+        colnames(a1) <- colnames(g2)
+        rownames(a1) <- rownames(g2)
+        H<-matrix(as.numeric(!a1==a2),nrow = n,ncol = m,byrow = F)
+        H <- as.data.frame(H)
+        # colnames(H) <- colnames(df)
+        # rownames(H) <- rownames(df)
+        return(df[which(H[,1]==0), ,drop=F])
+    }
+    
+    drawAlleleFreqPlot <- function(input_file, snps, out_prefix, height, width){
+        sink('/dev/null')
+        all_genotype <- fread(input_file, data.table=getOption("datatable.fread.datatable", FALSE), header=TRUE)
+        colnames(all_genotype)[1] <- "line"
+        all_genotype$group <- as.factor(all_genotype$group)
+        all_snps <- unlist(strsplit(snps, ","))
+        
+        for(snp in all_snps){
+            sub_genotype <- all_genotype[, c("line", "group", snp)]
+            print(head(sub_genotype))
+            colnames(sub_genotype) <- c("line", "group", "Genotype")
+            sub_genotype$Genotype <- as.factor(sub_genotype$Genotype)
+            sub_genotype <- removeHeterozygous(sub_genotype, col=3)
+            sub_genotype <- sub_genotype %>% group_by(group, Genotype) %>% summarize(n=n()) %>% mutate(freq=n/sum(n))
+            
+            p <- ggplot(sub_genotype, aes(x=group, fill = Genotype, group = Genotype)) + 
+                geom_bar(aes(y=freq), stat="identity", position = "dodge") +
+                theme_bw() +
+                theme(axis.title.x=element_blank(),
+                    axis.text.x = element_text(colour = "black", size = 12, vjust =1),
+                    axis.text.y = element_text(colour = "black", size = 12, hjust =1 ),
+                    axis.title = element_text(margin=margin(10, 5, 0, 0), color = "black", size = 14),
+                    axis.title.y = element_text(angle=90),
+                    panel.border = element_rect(color = 'black', fill=NA, size = 1),
+                    panel.grid.major = element_blank(), panel.grid.minor = element_blank()
+                ) +
+                scale_y_continuous(expand = expansion(mult = c(0.05, 0.1))) +
+                ylab("Allele frequency")
+            ggsave(paste0(snp,".allele_freq.pdf"), plot=p, width = width, height = height, useDingbats=FALSE)
+        }
+        sink()
+    }
+
+'''
+
+calPcaR = '''
+    suppressMessages(library(data.table))
+    suppressMessages(library(dplyr))
+    suppressMessages(library(FactoMineR))
+    suppressMessages(library(factoextra))
+    options(warn=-1)
+    calPCA <- function(phe_file, group_file, selected_strains, input_sep, group_sep, group_min_n, out_prefix){
+        sink('/dev/null')
+        
+        phe_df <- fread(phe_file, data.table=getOption("datatable.fread.datatable", FALSE), check.names=F, sep=input_sep, header=TRUE)
+        group_df <- fread(group_file, data.table=getOption("datatable.fread.datatable", FALSE), check.names=F, sep=group_sep, header=TRUE)
+        colnames(phe_df)[1] <- "ID"
+        colnames(group_df) <- c("line", "group")
+        
+        if(selected_strains!="None"){
+            selected_strains <- trimws(unlist(strsplit(selected_strains, ",")))
+        }else{
+            selected_strains <- colnames(phe_df)
+        }
+        phe_df <- phe_df %>% filter(ID %in% selected_strains)
+        
+        if(group_min_n>0){
+            group_df_by_n <- group_df %>% group_by(group) %>% summarise(n = n()) %>% filter(n>=group_min_n)            
+            group_df <- group_df %>% filter(group %in% group_df_by_n$group)
+        }
+        groups <- unique(group_df$group)
+        
+        final_res <- list()
+        for (var in groups){
+            selected_phe <- as.vector(group_df[which(group_df$group==var),]$line)
+            sub_phe_df <- phe_df[,c("ID",selected_phe), drop=F]
+            rownames(sub_phe_df) <- sub_phe_df[, 1]
+            sub_phe_df[, 1] <- NULL
+        
+            res.pca <- PCA(sub_phe_df, graph = FALSE)
+            pc1 <- get_pca_ind(res.pca)$coord[,1,drop=F]
+            colnames(pc1) <- c(var)
+            final_res[[var]] <- pc1
+        }
+        pc_res <- Reduce(merge, lapply(final_res, function(x) data.frame(x, ID = row.names(x), check.names=FALSE)))
+        write.csv(pc_res, file=paste0(out_prefix,".PCA.txt"), quote=FALSE, row.names=FALSE)
+        sink()
     }
 
 '''

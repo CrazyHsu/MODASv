@@ -11,7 +11,7 @@ import os, re, glob
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
+# import seaborn as sns
 import rpy2.robjects as robjects
 import warnings
 warnings.filterwarnings("ignore")
@@ -73,6 +73,13 @@ def parallel_plot(myFunc, values, threads=10):
     # for i in values:
     #     myFunc(*i)
 
+def removeFiles(myDir=None, fileList=None):
+    for f in fileList:
+        if myDir:
+            os.remove(os.path.join(myDir, f.strip("\n")))
+        else:
+            os.remove(f.strip("\n"))
+
 #####################################
 
 ############# Phylogenetic Tree ##############
@@ -87,17 +94,18 @@ def ped2fasta(ped_file, out_file):
             out.write('>'+name+"\n"+seq+"\n")
     out.close()
 
-def phylo_plot(plink_bed, output_prefix, group_file=None, group_sep=",", selected_lines=None, drop_line=None):
-    command = 'plink --bfile {} --recode --out {} --silent'.format(plink_bed, output_prefix)
-    if selected_lines:
-        command = command + ' --keep {}'.format(selected_lines)
-    os.system(command)
-    ped_file = output_prefix + '.ped'
-    fasta_file = output_prefix + '.fasta'
-    ped2fasta(ped_file, fasta_file)
-    nwk_file = '{}.tree.nwk'.format(output_prefix)
-    command = 'FastTree -nt -gtr -quiet {} > {}'.format(fasta_file, nwk_file)
-    # os.system(command)
+def phylo_plot(plink_bed, output_prefix, nwk_file=None, group_file=None, group_sep=",", selected_lines=None, drop_line=None):
+    if nwk_file == None or not os.path.exists(nwk_file):
+        command = 'plink --bfile {} --recode --out {} --silent --allow-no-sex'.format(plink_bed, output_prefix)
+        if selected_lines:
+            command = command + ' --keep {}'.format(selected_lines)
+        os.system(command)
+        ped_file = output_prefix + '.ped'
+        fasta_file = output_prefix + '.fasta'
+        ped2fasta(ped_file, fasta_file)
+        nwk_file = '{}.tree.nwk'.format(output_prefix)
+        command = 'FastTree -nt -gtr -quiet {} > {}'.format(fasta_file, nwk_file)
+        os.system(command)
     from plotWithR import drawPhyloPlotR
     robjects.r(drawPhyloPlotR)
     robjects.r.drawPhyloPlot(nwk_file, output_prefix, drop_line, group_file, group_sep)
@@ -115,36 +123,41 @@ rs p_wald
 1_2522874 6.791745e-03
 '''
 
-def manhattan_plot(gwas_res, out_dir, thresholdi=None, gwas_sep="\t", data_from="file", threads=10, dpi=300):
+def manhattan_plot(gwas_res, out_dir, thresholdi=None, gwas_sep="\t", data_from="file", threads=10, dpi=300,
+                   select_chrom="", select_start=0, select_end=0, highlight_pos="", highlight_text="", file_type="jpg"):
     thresholdi = ",".join(map(str, thresholdi))
     file_path = os.path.dirname(os.path.abspath(__file__))
     from plotWithR import drawManhattanPlotR
     from rpy2.rinterface_lib.callbacks import logger as rpy2_logger
     import logging
     rpy2_logger.setLevel(logging.ERROR)
-    cmplot = os.path.join(file_path, "utils", "CMplot.R")
+    # cmplot = os.path.join(file_path, "utils", "CMplot.R")
+    cmplot = os.path.join(file_path, "utils", "CMplot.r")
     robjects.r('source("' + cmplot + '")')
     robjects.r(drawManhattanPlotR)
 
     resolveDir(out_dir, chdir=False)
     if data_from == "file":
         file_name = os.path.basename(gwas_res)
-        out_plot_prefix = os.path.join(out_dir, file_name + "_manhattan")
-        robjects.r.drawManhattanPlot(gwas_res, thresholdi, out_plot_prefix, gwas_sep, "", dpi)
+        out_plot_prefix = os.path.join(out_dir, file_name)
+        robjects.r.drawManhattanPlot(gwas_res, thresholdi, out_plot_prefix, gwas_sep, file_name, dpi, select_chrom,
+                                     select_start, select_end, highlight_pos, highlight_text, file_type)
     elif data_from == "list":
         value_list = []
         with open(gwas_res) as f:
             for i in f.readlines():
                 file_name = os.path.basename(i)
-                out_plot_prefix = os.path.join(out_dir, file_name + "_manhattan")
-                value_list.append((i.strip(), thresholdi, out_plot_prefix, gwas_sep, "", dpi))
+                out_plot_prefix = os.path.join(out_dir, file_name)
+                value_list.append((i.strip(), thresholdi, out_plot_prefix, gwas_sep, file_name, dpi, select_chrom,
+                                   select_start, select_end, "", "", file_type))
         parallel_plot(robjects.r.drawManhattanPlot, value_list, threads=threads)
     elif data_from == "directory":
         value_list = []
         for i in glob.glob(os.path.join(gwas_res + '/*.assoc.txt')):
             file_name = os.path.basename(i)
-            out_plot_prefix = os.path.join(out_dir, file_name + "_manhattan")
-            value_list.append((i.strip(), thresholdi, out_plot_prefix, gwas_sep, "", dpi))
+            out_plot_prefix = os.path.join(out_dir, file_name)
+            value_list.append((i.strip(), thresholdi, out_plot_prefix, gwas_sep, file_name, dpi, select_chrom,
+                               select_start, select_end, "", "", file_type))
         parallel_plot(robjects.r.drawManhattanPlot, value_list, threads=threads)
     else:
         return "You should specify the correct type of data from, 'file' or 'list' or 'directory'"
@@ -155,14 +168,15 @@ def qq_plot(gwas_res, out_dir, gwas_sep="\t", data_from="file", threads=10, dpi=
     from rpy2.rinterface_lib.callbacks import logger as rpy2_logger
     import logging
     rpy2_logger.setLevel(logging.ERROR)
-    cmplot = os.path.join(file_path, "utils", "CMplot.R")
+    # cmplot = os.path.join(file_path, "utils", "CMplot.R")
+    cmplot = os.path.join(file_path, "utils", "CMplot.r")
     robjects.r('source("' + cmplot + '")')
     robjects.r(drawQQplotR)
 
     if data_from == "file":
         file_name = os.path.basename(gwas_res)
         out_plot_prefix = os.path.join(out_dir, file_name + "_qq")
-        robjects.r.drawQQplot(gwas_res, out_plot_prefix, gwas_sep, "", dpi, threshold)
+        robjects.r.drawQQplot(gwas_res, out_plot_prefix, gwas_sep, "test", dpi, threshold)
     elif data_from == "list":
         value_list = []
         with open(gwas_res) as f:
@@ -457,6 +471,13 @@ def box_plot(input_mat_file, snp_file, group_file, selected_genes, selected_snps
     robjects.r(drawBoxplotR)
     robjects.r.drawBoxplot(input_mat_file, snp_file, group_file, selected_genes, selected_snps,
                            selected_strains, scale, plot_type, out_prefix)
+
+def group_plot(input, out_prefix, sep=",", group_field="group", value_field="expression", group_min_n=0,
+               height=3, width=3):
+    from plotWithR import drawGroupPlotR
+    robjects.r(drawGroupPlotR)
+    # input_file, sep, group_field, value_field, out_prefix
+    robjects.r.drawGroupPlot(input, sep, group_field, value_field, out_prefix, height, width, group_min_n)
 ###################################
 
 ############# Nucleotide diversity Plots #############
@@ -829,4 +850,96 @@ def nucleotide_dst_plot1(plink_bed, group_file, gff_annotation, gene_list="", ch
         plot_right_lim = chr_end + plot_right_expand
         plot_diversity(diversity_data.iloc[:, 1:], os.path.join(out_dir, out_prefix + "_diversity"), smooth=smooth,
                        plot_left_lim=plot_left_lim, plot_right_lim=plot_right_lim)
+
+##################
+def snp_clumping(bed, out_prefix, r2):
+    from rpy2.robjects.packages import importr
+    from rpy2.robjects import pandas2ri
+    import rpy2.robjects as robjects
+    pandas2ri.activate()
+    robjects.r['options'](warn=-1)
+    base = importr('base')
+    bigsnpr = importr('bigsnpr')
+    bed = bed + ".bed"
+    out_prefix = out_prefix + "_clump.bed"
+    g = bigsnpr.snp_readBed(bed, backingfile=base.tempfile())
+    g = bigsnpr.snp_attach(g)
+    snp_keep = bigsnpr.snp_clumping(g[0], infos_chr=g[2]['chromosome'], infos_pos=g[2]['physical.pos'], thr_r2=r2,
+                                    ncores=1)
+    g_clump = bigsnpr.subset_bigSNP(g, ind_col=snp_keep)
+    g_clump = bigsnpr.snp_attach(g_clump)
+    bigsnpr.snp_writeBed(g_clump, out_prefix)
+    return len(g[2]), len(snp_keep)
+
+def construct_snp_genotype(bed_file, snps, group_file=None, group_sep=","):
+    command = "plink --bfile {} --snps {} --recode --out temp --tab --silent --allow-no-sex".format(bed_file, snps)
+    os.system(command)
+    ped_file = "temp.ped"
+    map_file = "temp.map"
+    ped = pd.read_csv(ped_file, sep="\t", header=None, dtype=str, index_col=0)
+    ped = ped.iloc[:, 5:]
+    map = pd.read_csv(map_file, sep="\t", header=None, dtype=str)
+    ped = ped.applymap(lambda x: x.replace(" ", "") if isinstance(x, str) else x)
+    ped.columns = map.iloc[:, 1]
+    if not group_file and os.path.exists(group_file):
+        group = pd.read_csv(group_file, sep=group_sep, header=None, dtype=str, index_col=0)
+        group.columns = ["group"]
+        merged_df = pd.merge(group, ped, left_index=True, right_index=True, how="inner")
+        ped = merged_df
+    ped.to_csv("tmp_merged.txt", index=True, header=True)
+    temp_files = ["temp.ped", "temp.map", "temp.log", "temp.nosex", "tmp_merged.txt"]
+    return "tmp_merged.txt", temp_files
+
+
+def calc_allele_freq(bed_file, snps, group_file, group_sep, out_prefix, height, width):
+    merged_file, temp_files = construct_snp_genotype(bed_file, snps, group_file=group_file, group_sep=group_sep)
+    from plotWithR import drawAlleleFreqPlotR
+    from rpy2.rinterface_lib.callbacks import logger as rpy2_logger
+    import logging
+    rpy2_logger.setLevel(logging.ERROR)
+    robjects.r(drawAlleleFreqPlotR)
+    robjects.r.drawAlleleFreqPlot(merged_file, snps, out_prefix, height, width)
+    removeFiles(fileList=temp_files)
+
+# def phe_reduce_dimension(input, group, method, input_sep, group_sep, out_prefix):
+#     from sklearn.decomposition import PCA
+#
+#     phe_df = pd.read_csv(input, sep=input_sep, index_col=0)
+#     group_df = pd.read_csv(group, sep=group_sep, names=["id", "group"])
+#
+#     group_df.groupby("group")
+#     phe_df.columns.values[0] = "ID"
+#     # phe_df = pd.melt(phe_df, id_vars=["ID"])
+#     # merged_df = pd.merge(phe_df, group_df, left_on="variable", right_on="id")
+#     # merged_df = merged_df.dropna()
+#     # merged_df = merged_df.loc[:, ["ID", "variable", "value", "group"]]
+#
+#     gb = group_df.groupby("group")
+#     keys = gb.groups.keys()
+#     for key in keys:
+#         if len(set(gb.get_group(key)["id"]) & set(phe_df.columns)) > 0:
+#             sub_phe_df = phe_df.loc[:, gb.get_group(key)["id"]]
+#             pca = PCA()
+#             pca_res = pca.fit_transform(sub_phe_df)
+#             pca_res[:, 0]
+
+def phe_reduce_dimension(input, group, selected_strains, method, input_sep, group_sep, group_min_n, out_prefix):
+    if method == "pca":
+        if selected_strains:
+            if os.path.isfile(selected_strains):
+                selected_strains = ",".join(map(str, getOneColumnToList(selected_strains, sep=",")))
+            else:
+                selected_strains = selected_strains
+        else:
+            selected_strains = "None"
+
+        from plotWithR import calPcaR
+        from rpy2.rinterface_lib.callbacks import logger as rpy2_logger
+        import logging
+        rpy2_logger.setLevel(logging.ERROR)
+        robjects.r(calPcaR)
+        robjects.r.calPCA(input, group, selected_strains, input_sep, group_sep, group_min_n, out_prefix)
+        pass
+
+
 

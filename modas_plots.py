@@ -15,11 +15,12 @@ Details are: "plot_manhattan", "plot_qq", "plot_genotype_box", "plot_forest", "p
 
 import argparse, sys
 from functions import *
+from commonClasses import Logger
 
 def main(args):
     if args.command == "plot_phylo":
-        phylo_plot(args.plink_bed, args.out_prefix, group_file=args.group_file, group_sep=args.group_sep,
-                   selected_lines=args.sub_lines, drop_line=args.drop_lines)
+        phylo_plot(args.plink_bed, args.out_prefix, nwk_file=args.nwk_file, group_file=args.group_file,
+                   group_sep=args.group_sep, selected_lines=args.sub_lines, drop_line=args.drop_lines)
     if args.command == "plot_scatterps":
         scatterps_plot(args.input, group_file=args.group_file, ps_type=args.ps_type, out_plot_prefix=args.out_prefix,
                         input_sep=args.input_sep, group_sep=args.group_sep)
@@ -35,7 +36,9 @@ def main(args):
     if args.command == "plot_manhattan":
         thresholdi = [args.thresholdD, args.thresholdL, args.thresholdU]
         manhattan_plot(args.input, args.out_dir, thresholdi=thresholdi, gwas_sep=args.input_sep,
-                       data_from=args.data_from, threads=int(args.threads), dpi=int(args.dpi))
+                       data_from=args.data_from, threads=int(args.threads), dpi=int(args.dpi),
+                       select_chrom=args.chrom, select_start=int(args.start), select_end=int(args.end),
+                       highlight_pos=args.hl_pos, highlight_text=args.hl_text, file_type=args.file_type)
     if args.command == "plot_qq":
         qq_plot(args.input, args.out_dir, gwas_sep=args.input_sep, data_from=args.data_from,
                 threads=int(args.threads), dpi=int(args.dpi), threshold=float(args.threshold))
@@ -51,6 +54,10 @@ def main(args):
     if args.command == "plot_phebox":
         box_plot(args.input, args.snp, args.group, args.selected_genes, args.selected_snps,
                  args.selected_strains, str(args.scale), args.plot_type, args.out_prefix)
+    if args.command == "plot_group":
+        group_plot(args.input, args.out_prefix, sep=args.sep, group_field=args.group_field,
+                   value_field=args.value_field, group_min_n=args.group_min_n,
+                   height=float(args.height), width=float(args.width))
 
     if args.command == "plot_net":
         net_plot(args.input, args.out_prefix, args.input_sep, args.pvalue, module_size=args.module_size)
@@ -68,6 +75,29 @@ def main(args):
     if args.command == "plot_html":
         pass
 
+    ########################
+    if args.command == "clump":
+        log = Logger()
+        log.log('Begin snp clumping...')
+        g_clump_list = snp_clumping(args.plink_bed, args.out_prefix, args.r2)
+        log.log('SNP clumping is done.')
+        log.log('There are {0} snps in input genotype file, after clumping, {1} snp left.'.format(g_clump_list[0],
+                                                                                                  g_clump_list[1]))
+        log.log('Clumped genotype file is saved as {0}_clump.bed, {0}_clump.bim and {0}_clump.fam.'.format(args.out_prefix))
+
+    if args.command == "allele_freq":
+        snps = args.snps
+        if args.from_file and os.path.isfile(args.snps):
+            with open(args.snps) as f:
+                snps = [i.strip() for i in f.readlines()]
+                snps = ",".join(snps)
+        calc_allele_freq(args.plink_bed, snps, args.group_file, args.group_sep, args.out_prefix, args.height, args.width)
+
+    if args.command == "rd":
+        phe_reduce_dimension(args.input, args.group_for_phe, args.selected_strains, args.method, args.input_sep,
+                             args.group_sep, args.group_min_n, args.out_prefix)
+
+
 if __name__ == '__main__':
     USAGE = ' Miscellaneous plot functions to visualize the results of MODAS. '
 
@@ -77,7 +107,10 @@ if __name__ == '__main__':
     # phylogenetic tree plot
     plot_phylo = subparsers.add_parser('plot_phylo', help="Construct phylogenetic tree",
                                        usage='%(prog)s [options]')
-    plot_phylo.add_argument('-bed', dest="plink_bed", help="The plink bed file")
+    plot_phylo.add_argument('-bed', dest="plink_bed", default=None, help="The plink bed file")
+    plot_phylo.add_argument('-nwk', dest="nwk_file", default=None,
+                            help="The nwk file used to construct phylogenetic tree."
+                                 "When nwk file is set, the information in bed file will not be used.")
     plot_phylo.add_argument('-o', dest="out_prefix", default="MODASv", help="The output file prefix")
     plot_phylo.add_argument('-g', dest="group_file", default=None,
                             help="The group information used to color the sub-population. Default: None")
@@ -115,6 +148,18 @@ if __name__ == '__main__':
                           help="The high p-value threshold for plotting")
     plot_mht.add_argument("-threshold_default", dest="thresholdD", type=float, default=None,
                           help="The data-orient p-value threshold for plotting")
+    plot_mht.add_argument("-chrom", dest="chrom", type=str, default="",
+                          help="Specify the chromosome to plot. Default plot all the chromosomes")
+    plot_mht.add_argument("-start", dest="start", type=int, default=0,
+                          help="Specify the start position to plot. Default: 0")
+    plot_mht.add_argument("-end", dest="end", type=int, default=0,
+                          help="Specify the start position to plot. Default: length of chromosome")
+    plot_mht.add_argument("-hl_pos", dest="hl_pos", type=str, default="",
+                          help="Specify the position of SNPs to be highlighted. Use comma to separate multiple positions.")
+    plot_mht.add_argument("-hl_text", dest="hl_text", type=str, default="",
+                          help="The texts to be highlighted. Use comma to separate multiple positions.")
+    plot_mht.add_argument("-file_type", dest="file_type", type=str, default="jpg",
+                          help="The output file type [jpg, pdf, tiff]. Default: jpg")
     plot_mht.add_argument("-data_from", dest="data_from", default="file",
                           help="The type of GWAS output stored, 'file' or 'list' or 'directory'. Default: file")
     plot_mht.add_argument("-input_sep", dest="input_sep", default="\t",
@@ -146,6 +191,7 @@ if __name__ == '__main__':
     plot_ptb = subparsers.add_parser('plot_phebox', help='Draw box-line plots for genotypes in different strains',
                                      usage='%(prog)s [options]')
     plot_ptb.add_argument('-i', dest="input", help="The expression file")
+    plot_ptb.add_argument('-bed', dest="plink_bed", help="The plink bed file")
     plot_ptb.add_argument('-snp', dest="snp", help="The SNP file")
     plot_ptb.add_argument('-group', dest="group", help="The group file")
     plot_ptb.add_argument('-s_genes', dest="selected_genes", default=None,
@@ -290,10 +336,73 @@ if __name__ == '__main__':
     # plink_bed, group_file, gff_annotation, gene_list = "", chrom = None, chr_start = 0, chr_end = 0,
     # diversity_method = "pi", split_by_gene = True, keep_temp = True, out_dir = "nd_output"
 
+    plot_group = subparsers.add_parser('plot_group', help='Draw box plot for different group',
+                                     usage='%(prog)s [options]')
+    plot_group.add_argument('-i', dest="input", required=True, help="The expression file")
+    plot_group.add_argument("-group_field", dest="group_field", default="group", help="The field used to group the values. Default: 'group'")
+    plot_group.add_argument("-value_field", dest="value_field", default="expression", help="The value field used to calculate. Default: 'expression'")
+    plot_group.add_argument("-sep", dest="sep", default=",", help="The separate character of input file")
+    plot_group.add_argument("-group_min_n", dest="group_min_n", type=int, default=0,
+                            help="The minimal number of members of a group. Default: 0")
+    plot_group.add_argument("-o", dest="out_prefix", default="MODASv", help="The prefix of output files. Default: MODASv")
+    plot_group.add_argument("-height", dest="height", type=float, default=6,
+                            help="The height of output plot. Default: 5")
+    plot_group.add_argument("-width", dest="width", type=float, default=8,
+                            help="The width of output plot. Default: 5")
+
     # # html report
     # plot_html = subparsers.add_parser('plot_html', help='Aggregate the results in a html report',
     #                                  usage='%(prog)s [options]')
     # plot_html.add_argument('-c', dest="default_cfg", help="The config file used for init setting.")
+
+
+    ##################
+    # clumping
+    clump = subparsers.add_parser('clump', help='Clump the SNPs based on Linkage Disequilibrium',
+                                  usage='%(prog)s [options]')
+    clump.add_argument('-bed', dest="plink_bed", required=True,
+                       help="The plink bed file")
+    clump.add_argument('-r2', dest="r2", type=float, default=0.2,
+                       help="r^2 value for the SNP clumping analysis. Default is 0.2.")
+    clump.add_argument('-o', dest="out_prefix", type=str, default="MODASv",
+                       help="The output prefix. Default: MODASv")
+
+    # allele frequency
+    allele_freq = subparsers.add_parser('allele_freq', help='Calculate the allele frequency of selected SNPs',
+                                        usage='%(prog)s [options]')
+    allele_freq.add_argument("-bed", dest="plink_bed", required=True,
+                             help="The plink bed file")
+    allele_freq.add_argument("-snps", dest="snps", help="The selected SNPs with comma separated.")
+    allele_freq.add_argument("-from_file", action="store_true", default=False,
+                             help="Specify the SNPs from file")
+    allele_freq.add_argument("-group", dest="group_file", help="The group file")
+    allele_freq.add_argument("-group_sep", dest="group_sep", type=str, default=",",
+                             help="The separator in group file. Default: comma")
+    allele_freq.add_argument("-o", dest="out_prefix", type=str, default="MODASv",
+                             help="The output prefix. Default: MODASv")
+    allele_freq.add_argument("-width", dest="width", type=float, default=3,
+                             help="The width of output file. Default: 3.0")
+    allele_freq.add_argument("-height", dest="height", type=float, default=4,
+                             help="The height of output file. Default: 4.0")
+
+    # dimensionality reduction for phenotypes
+    rd = subparsers.add_parser('rd', help='Reduce dimension for phenotypes',
+                               usage='%(prog)s [options]')
+    rd.add_argument("-i", dest="input", help="The expression file")
+    rd.add_argument("-group_for_phe", dest="group_for_phe",
+                    help="The group file used to group phenotypes such as gene expression or metabolite abundance")
+    rd.add_argument("-s_strains", dest="selected_strains", default=None,
+                    help="The file listing selected strains or a string with comma separated")
+    rd.add_argument("-input_sep", dest="input_sep", default=",",
+                    help="The separator in input file. Default: comma")
+    rd.add_argument("-group_sep", dest="group_sep", default=",",
+                    help="The separator in group file. Default: comma")
+    rd.add_argument("-m", dest="method", choices=["pca", "tsne", "mean", "median"], default="pca",
+                    help="The method used to reduce the dimension. Default: pca.")
+    rd.add_argument("-group_min_n", dest="group_min_n", default=0, type=int,
+                    help="The minimal number of elements in each group. Default: 0")
+    rd.add_argument("-o", dest="out_prefix", type=str, default="MODASv",
+                    help="The output prefix. Default: MODASv")
 
     if len(sys.argv) <= 2:
         sys.argv.append('-h')
